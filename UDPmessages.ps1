@@ -1,9 +1,28 @@
 
 # SRC: https://cloudbrothers.info/en/test-udp-connection-powershell/
-# Author: Fabian Bader
-# License: Public domain (was not maked on the source)
+# Author: Fabian Bader, Laszlo Scherman
+# License: Public domain (was not marked on the source)
 
 
+<#
+
+.EXAMPLE
+```
+    . .\UDPmessages.ps1
+    Start-UDPServer -Port 5004
+    # ------------
+    Stop with CRTL + C
+    Server is waiting for connections - 0.0.0.0:5004
+
+    remote          recv                send                data
+    ------          ----                ----                ----
+    127.0.0.1:50000 2022-06-18 13:14:00 2022-06-18 13:14:00 @{a=Hello; b=World}
+    127.0.0.1:50000 2022-06-18 13:14:49 2022-06-18 13:14:49 Hello
+    127.0.0.1:50000 2022-06-18 13:14:49 2022-06-18 13:14:49 World
+    127.0.0.1:50000 2022-06-18 13:15:18 2022-06-18 13:15:18
+    Close UDP connection
+```
+#>
 function Start-UDPServer {
     [CmdletBinding()]
     param (
@@ -13,33 +32,64 @@ function Start-UDPServer {
     )
     
     # Create a endpoint that represents the remote host from which the data was sent.
-    $RemoteComputer = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
-    Write-Host "Server is waiting for connections - $($UdpObject.Client.LocalEndPoint)"
+    $remoteComputer = [System.Net.IPEndPoint]::new([System.Net.IPAddress]::Any, 0)
     Write-Host "Stop with CRTL + C"
 
-    # Loop de Loop
-    do {
-        # Create a UDP listender on Port $Port
-        $UdpObject = New-Object System.Net.Sockets.UdpClient($Port)
-        # Return the UDP datagram that was sent by the remote host
-        $ReceiveBytes = $UdpObject.Receive([ref]$RemoteComputer)
-        # Close UDP connection
-        $UdpObject.Close()
-        # Convert received UDP datagram from Bytes to String
-        $ASCIIEncoding = New-Object System.Text.ASCIIEncoding
-        [string]$ReturnString = $ASCIIEncoding.GetString($ReceiveBytes)
+    # Create a UDP listener on Port $Port
+    $udpObject = [System.Net.Sockets.UdpClient]::new($Port)
+    if ($udpObject -eq $null) {
+        throw "Failed to bind to port $Port. Try again later."
+    }
+    
+    try {
+        
+        Write-Host "Server is waiting for connections - $($udpObject.Client.LocalEndPoint)"  # object is not defined here!??
 
-        # Output information
-        [PSCustomObject]@{
-            LocalDateTime = $(Get-Date -UFormat "%Y-%m-%d %T")
-            SourceIP      = $RemoteComputer.address.ToString()
-            SourcePort    = $RemoteComputer.Port.ToString()
-            Payload       = $ReturnString
-        }
-    } while (1)
+        # Convert received UDP datagram from bytes to String
+        $ASCIIEncoding = [System.Text.ASCIIEncoding]::new()
+
+        # Loop de Loop
+        do {
+            $receiveBytes = $udpObject.Receive([ref]$RemoteComputer)
+
+            if ($receiveBytes -and $receiveBytes.Count -gt 1) {
+                [string]$returnString = $ASCIIEncoding.GetString($receiveBytes)
+
+                # Output information
+                ($returnString | ConvertFrom-Json) | Select-Object `
+                    @{N='remote'; E={"$($remoteComputer.address.ToString()):$($remoteComputer.Port.ToString())"}}, `
+                    @{N='recv'; E={"$(Get-Date -UFormat '%Y-%m-%d %T')"}}, `
+                    *
+
+        
+            }
+
+            Start-Sleep -Milliseconds 200
+
+        } while (1)
+
+    } 
+    finally {
+
+        Write-Host "Close UDP connection"
+        $udpObject.Close()
+
+    }
+
+
 }
 
+<#
 
+.EXAMPLE
+Start-UDPServer -Port 5004
+```
+    . .\UDPmessages.ps1
+    @{a="Hello"; b="World"} | Test-NetConnectionUDP -ComputerName 127.0.0.1 -Port 5004
+    ("Hello", "World") | Test-NetConnectionUDP -ComputerputerName 127.0.0.1 -Port 5004
+    @($null) | Test-NetConnectionUDP -ComputerName 127.0.0.1 -Port 5004
+```
+#>
 
 function Test-NetConnectionUDP {
     [CmdletBinding()]
@@ -54,26 +104,38 @@ function Test-NetConnectionUDP {
 
         # Parameter help description
         [Parameter(Mandatory = $false)]
-        [int32]$SourcePort = 50000
+        [int32]$SourcePort = 50000,
+
+        [Parameter(ValueFromPipeline, ValueFromRemainingArguments)]
+        $inputData
     )
 
     begin {
         # Create a UDP client object
-        $UdpObject = New-Object system.Net.Sockets.Udpclient($SourcePort)
+        $udpObject = [system.Net.Sockets.Udpclient]::new($SourcePort)
         # Define connect parameters
-        $UdpObject.Connect($ComputerName, $Port)
+        $udpObject.Connect($ComputerName, $Port)
+        $ASCIIEncoding = New-Object System.Text.ASCIIEncoding
     }
 
     process {
-        # Convert current time string to byte array
-        $ASCIIEncoding = New-Object System.Text.ASCIIEncoding
-        $Bytes = $ASCIIEncoding.GetBytes("$(Get-Date -UFormat "%Y-%m-%d %T")")
-        # Send data to server
-        [void]$UdpObject.Send($Bytes, $Bytes.length)
+        
+        $inputData | ForEach-Object {
+            $data = @{ 
+                send="$(Get-Date -UFormat "%Y-%m-%d %T")";
+                data=$_
+            }
+
+            # Convert current time string to byte array
+            $bytes = $ASCIIEncoding.GetBytes( ($data | ConvertTo-Json ) )
+
+            # Send data to server
+            [void]$udpObject.Send($bytes, $bytes.length)
+        }
     }
 
     end {
         # Cleanup
-        $UdpObject.Close()
+        $udpObject.Close()
     }
 }
