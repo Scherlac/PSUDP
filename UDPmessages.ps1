@@ -43,7 +43,7 @@ function Start-UDPServer {
     
     try {
         
-        Write-Host "Server is waiting for connections - $($udpObject.Client.LocalEndPoint)"  # object is not defined here!??
+        Write-Host "Server is waiting for connections - $($udpObject.Client.LocalEndPoint)"
 
         # Convert received UDP datagram from bytes to String
         $ASCIIEncoding = [System.Text.ASCIIEncoding]::new()
